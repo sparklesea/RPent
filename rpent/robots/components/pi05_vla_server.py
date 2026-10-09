@@ -248,9 +248,10 @@ class Pi05VLAFacade(BaseVLAFacade):
         the openpi wire format (see ``Pi05VLAClient.encode_obs``).
         """
         mode = (options or {}).get("mode", "eval")
+        t0 = time.perf_counter()
         with torch.no_grad():
             actions, _ = self._model.predict_action_batch(obs, mode=mode)
-        return (
+        actions_array = (
             actions.detach().cpu().numpy()
             if (
                 hasattr(actions, "detach")
@@ -259,6 +260,8 @@ class Pi05VLAFacade(BaseVLAFacade):
             )
             else np.asarray(actions)
         ).astype(np.float32)
+        logger.info("predict duration_s=%.4f mode=%s", time.perf_counter() - t0, mode)
+        return actions_array
 
 
 # ---------------------------------------------------------------------------

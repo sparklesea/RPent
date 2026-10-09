@@ -383,6 +383,33 @@ class LiberoPrimitives:
             "truncated": self.env.truncated,
         }
 
+    def move_to_pair(
+        self,
+        first: dict[str, Any],
+        second: dict[str, Any],
+        *,
+        max_position_error_m: float = 0.02,
+    ) -> dict:
+        """Run two translations, checking the observed state between them."""
+        from robots.libero.move_pair import execute_move_pair
+
+        return execute_move_pair(
+            self, first, second, max_position_error_m=max_position_error_m
+        )
+
+    def action_pair(
+        self,
+        first: dict[str, Any],
+        second: dict[str, Any],
+        *,
+        mode: str = "guarded",
+        guard: dict[str, Any] | None = None,
+    ) -> dict:
+        """Run two state-changing primitives in one open-loop or guarded call."""
+        from robots.libero.action_pair import execute_action_pair
+
+        return execute_action_pair(self, first, second, mode=mode, guard=guard)
+
     def rotate_wrist(
         self,
         *,
@@ -1179,6 +1206,117 @@ def _save_observation_artifacts(
 # Tool schema declarations (Anthropic-shaped canonical schema)
 # ---------------------------------------------------------------------------
 
+
+def _move_pair_action_schema() -> dict:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "xyz": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 3,
+                "maxItems": 3,
+            },
+            "gripper": {"type": "number", "enum": [-1, 1]},
+            "step_clip": {"type": "number", "minimum": 0.001, "maximum": 0.025},
+            "max_steps": {"type": "integer", "minimum": 1, "maximum": 150},
+            "tol": {"type": "number", "minimum": 0.001, "maximum": 0.02},
+        },
+        "required": ["xyz", "gripper"],
+    }
+
+
+MOVE_TO_PAIR_SPEC = {
+    "name": "move_to_pair",
+    "description": (
+        "Submit two known world-frame move_to targets in ONE tool call. "
+        "Provide first and second objects with xyz and gripper (+1 holds, "
+        "-1 opens), optionally step_clip, max_steps, tol. The same gripper "
+        "command is required for both. Execute first, then execute second "
+        "ONLY if position error is within max_position_error_m, gripper gap "
+        "changes by at most 0.01 m, and the episode is active. Otherwise "
+        "return latest images/state for replanning. Translations only: never "
+        "pair picks, releases, reorientation, or uncertain contact motions."
+    ),
+    "input_schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "first": _move_pair_action_schema(),
+            "second": _move_pair_action_schema(),
+            "max_position_error_m": {
+                "type": "number",
+                "minimum": 0.001,
+                "maximum": 0.03,
+                "description": "First-target position guard in meters, default 0.02.",
+            },
+        },
+        "required": ["first", "second"],
+    },
+}
+
+
+ACTION_PAIR_ACTIONS = [
+    "move_to",
+    "move_pose",
+    "pi0_pick",
+    "pi0_doubled",
+    "release",
+    "set_gripper",
+    "rotate_wrist",
+    "rotate_pitch",
+]
+
+
+def _action_pair_action_schema() -> dict:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "action": {"type": "string", "enum": ACTION_PAIR_ACTIONS},
+            "args": {
+                "type": "object",
+                "description": "Arguments for the selected primitive.",
+                "additionalProperties": True,
+            },
+        },
+        "required": ["action"],
+    }
+
+
+ACTION_PAIR_SPEC = {
+    "name": "action_pair",
+    "description": (
+        "Execute two state-changing robot primitives in one tool call. "
+        "The first and second actions may include move_to, pi0_pick, release, "
+        "contact skills, or other listed primitives. In open_loop mode the "
+        "second runs whenever the episode remains active. In guarded mode the "
+        "executor checks the first primitive's local result and robot state "
+        "before running the second; on failure it skips the second and returns "
+        "the latest state for replanning. Do not put read-only perception "
+        "tools in this pair."
+    ),
+    "input_schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "first": _action_pair_action_schema(),
+            "second": _action_pair_action_schema(),
+            "guard": {
+                "type": "object",
+                "additionalProperties": True,
+                "description": (
+                    "Optional guarded postcondition thresholds such as "
+                    "max_position_error_m or max_orientation_error_rad."
+                ),
+            },
+        },
+        "required": ["first", "second"],
+    },
+}
+
+
 TOOLS_SPEC = [
     {
         "name": "reset",
@@ -1834,6 +1972,26 @@ def back_project(
         return {"error": f"bad camera '{camera}' (use 'agentview' or 'wrist')"}
     if resolution not in ("high", "low"):
         return {"error": f"bad resolution '{resolution}' (use 'high' or 'low')"}
+
+    # Some OpenAI-compatible models emit numeric tool arguments as JSON strings.
+    # Normalize localization arguments before numeric bounds checks.
+    try:
+        if row is not None:
+            row = int(float(row))
+        if col is not None:
+            col = int(float(col))
+        if step is not None:
+            step = int(float(step))
+        if isinstance(row_range, str):
+            row_range = json.loads(row_range)
+        if isinstance(col_range, str):
+            col_range = json.loads(col_range)
+        if isinstance(z_min, str):
+            z_min = float(z_min)
+        if isinstance(z_max, str):
+            z_max = float(z_max)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {"error": f"invalid numeric localization argument: {exc}"}
 
     region_mode = row_range is not None or col_range is not None
     if not region_mode and (row is None or col is None):

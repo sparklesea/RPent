@@ -23,6 +23,7 @@ import asyncio
 import base64
 import json
 import threading
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from functools import partial
@@ -65,6 +66,7 @@ from pydantic_ai_harness.compaction import SlidingWindowCompaction
 from rpent.dashboard.events import DashboardEventSink, TranscriptEvent, UsageEvent
 from rpent.dashboard.interaction import DashboardInteractionPort, DashboardMessage
 from rpent.dashboard.planner_control import DashboardPlannerControl
+from rpent.planner.accounting import RequestAccounting
 from rpent.planner.base import REASONING_EFFORTS, Planner, PlannerResult
 from rpent.tools.toolkit import Toolkit, ToolResult
 from rpent.utils.logging import get_logger
@@ -144,6 +146,7 @@ class ApiAgentLoop(Planner):
         session = _Session(
             adapter, conversation_id, max_turns, interactive=self.interactive
         )
+        model_timings: list[dict] = []
         agent = Agent(
             self.model,
             name="rpent_api",
@@ -163,6 +166,7 @@ class ApiAgentLoop(Planner):
                     False if self.reasoning_effort == "none" else self.reasoning_effort
                 ),
                 session,
+                RequestAccounting(model_timings, role="planner"),
             ],
         )
         if interaction is not None:
@@ -198,6 +202,10 @@ class ApiAgentLoop(Planner):
                 "total_cached_input_tokens": session.usage.cache_read_tokens,
                 "turns_used": session.usage.requests,
                 "tool_calls": adapter.tool_calls,
+                "timing": {
+                    "model_requests": model_timings,
+                    "tools": adapter.tool_timings,
+                },
             },
             error=session.error,
         )
@@ -268,6 +276,7 @@ class _HarnessToolkit(FunctionToolset):
         self.no_images = no_images
         self.finish_result: dict[str, Any] | None = None
         self.tool_calls = 0
+        self.tool_timings: list[dict] = []
         self.messages: list[dict[str, Any]] = []
         self.stopping = threading.Event()
         self.validators: dict[str, Draft202012Validator] = {}
@@ -358,6 +367,9 @@ class _HarnessToolkit(FunctionToolset):
         if error is not None:
             raise ModelRetry(f"Invalid arguments for {name}: {error.message}")
         self._record_call(name, arguments, ctx)
+        timing = {"tool": name}
+        started = time.perf_counter()
+        self.tool_timings.append(timing)
         operation = asyncio.create_task(
             asyncio.to_thread(self.toolkit.execute_tool, name, arguments)
         )
@@ -369,7 +381,10 @@ class _HarnessToolkit(FunctionToolset):
             # A cancelled asyncio task does not stop the physical worker.
             # Drain it before another run may use the same toolkit.
             await operation
+            timing["cancelled"] = True
             raise
+        finally:
+            timing["duration_s"] = round(time.perf_counter() - started, 4)
         self._record_result(name, ctx, self._text(result))
         return result
 

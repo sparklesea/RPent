@@ -518,6 +518,7 @@ OUTPUT_DISCIPLINE = """- Brief reasoning before each tool call (1-2 sentences): 
 - Save the audit BEFORE calling `finish`.
 - Stop immediately after writing the audit and calling `finish`. Do not chat further."""
 
+
 (
     STEP_READ_GUIDES,
     STEP_INSPECT_INITIAL,
@@ -572,7 +573,7 @@ LOCAL_WORKFLOW_STEPS = (
 def system_prompt(
     variables: Mapping[str, object] | None = None,
 ) -> PromptNode:
-    """Assemble the LIBERO evaluation prompt for the selected memory profile."""
+    """Assemble the LIBERO evaluation prompt for the selected profile."""
     if (variables or {}).get("memory_profile", "hf") == "local":
         return {
             "ROLE AND EVALUATION": ROLE_AND_EVALUATION,

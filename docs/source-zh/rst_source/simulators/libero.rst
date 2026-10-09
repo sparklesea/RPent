@@ -167,6 +167,14 @@ SAM3 配置
 运行一个任务
 ------------
 
+实验性精简提示与双动作模式
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--prompt-profile compact`` 选择较短的评测提示，要求简洁决策、只读取相关记忆、使用短 VLA 抓取指令并根据观测修正。默认仍为 ``full``。精简提示仅用于评测，不能与 ``--explore`` 同时使用。应在实验结果中记录提示版本；它改变规划策略，环境原生成功判定保持不变。
+
+API 规划器的消融实验可通过 ``RPENT_PAIR_MODE=open_loop`` 或 ``guarded`` 开放 ``action_pair``。Open-loop 在一次任务运行尚未结束时执行第二个原语；guarded 还检查第一个原语的局部返回值和机器人状态。这些检查不能证明物体身份正确或放置成功。``RPENT_STRICT_PAIR=1`` 隐藏直接调用的 ``move_to`` 和 ``move_pose``。较早的纯平移双步实验使用 ``RPENT_ENABLE_MOVE_PAIR=1``。普通运行及 staged 规划器应取消这些环境变量。带模型验收的分阶段规划请参阅 :doc:`../guides/configure_planner`。
+
+
 完成上面的模型配置，并按 :doc:`../guides/configure_planner` 配置规划器。以下命令运行 ``libero_object_swap`` 的任务 2，seed 为 0。
 
 .. code-block:: bash

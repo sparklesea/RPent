@@ -88,7 +88,12 @@ def build_env_cfg(
                 # Render depth too, so we can back-project pixels to world
                 # from depth + camera calibration
                 "camera_depths": True,
+                # Let RLinf own episode truncation via max_episode_steps.
+                # LIBERO/robosuite otherwise marks its internal horizon done
+                # before the wrapper can return truncation, so the next action
+                # raises "executing action in terminated episode".
                 "horizon": max_episode_steps,
+                "ignore_done": True,
                 **(
                     {"robots": [os.environ["LIBERO_ROBOT_BASE"]]}
                     if os.environ.get("LIBERO_ROBOT_BASE")

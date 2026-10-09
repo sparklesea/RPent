@@ -20,6 +20,7 @@ LIBERO primitives (``move_to``, ``pi0_pick``, ``release``, ...) on top.
 
 from __future__ import annotations
 
+import os
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -82,9 +83,16 @@ class LiberoToolkit(Toolkit):
             "back_project": partial(libero_tools.back_project, state=self._state),
             "segment": partial(self._primitives.segment, state=self._state),
         }
+        pair_mode = os.getenv("RPENT_PAIR_MODE")
+        strict_pair = os.getenv("RPENT_STRICT_PAIR") == "1"
         for spec in libero_tools.TOOLS_SPEC:
             name = spec["name"]
             if name == "reset" and self._mode != "exploration":
+                continue
+            if strict_pair and name in {"move_to", "move_pose"}:
+                # In strict pair experiments, direct translations must be
+                # submitted through action_pair. Pick/release/contact tools
+                # remain available as single primitives.
                 continue
             if name in state_handlers:
                 handler = state_handlers[name]
@@ -94,6 +102,23 @@ class LiberoToolkit(Toolkit):
                     continue  # spec without a backing primitive method
                 handler = partial(self._execute_primitive, name, handler)
             self.add_tool(name, spec, handler)
+        if os.getenv("RPENT_ENABLE_MOVE_PAIR") == "1":
+            self.add_tool(
+                "move_to_pair",
+                libero_tools.MOVE_TO_PAIR_SPEC,
+                partial(
+                    self._execute_primitive,
+                    "move_to_pair",
+                    self._primitives.move_to_pair,
+                ),
+            )
+        if pair_mode in {"open_loop", "guarded"}:
+            pair_handler = partial(self._primitives.action_pair, mode=pair_mode)
+            self.add_tool(
+                "action_pair",
+                libero_tools.ACTION_PAIR_SPEC,
+                partial(self._execute_primitive, "action_pair", pair_handler),
+            )
         if self._mode == "exploration":
             reset_spec = next(
                 spec for spec in libero_tools.TOOLS_SPEC if spec["name"] == "reset"

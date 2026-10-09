@@ -187,6 +187,12 @@ def _add_cli_args(parser: argparse.ArgumentParser, use_dashboard: bool) -> None:
     )
     parser.add_argument("--max-episode-steps", type=int, default=10000)
     parser.add_argument(
+        "--prompt-profile",
+        choices=["full", "compact"],
+        default="full",
+        help="LIBERO evaluation prompt (compact is experimental; default: full).",
+    )
+    parser.add_argument(
         "--libero-type",
         default=None,
         choices=["standard", "pro", "plus"],
@@ -293,6 +299,8 @@ def _parse_config(args: argparse.Namespace) -> RunConfig:
     recipe_tag = f"{args.suite.replace('libero_', '')}_t{args.task}_s{args.seed}"
     explore = bool(getattr(args, "explore", False))
     requested_profile = getattr(args, "memory_profile", None)
+    if explore and getattr(args, "prompt_profile", "full") != "full":
+        raise ValueError("--prompt-profile compact is evaluation-only")
     if explore and requested_profile == "hf":
         raise ValueError("--explore cannot be used with --memory-profile hf")
     if explore and args.explore_sessions <= 0:
@@ -342,6 +350,7 @@ def _parse_config(args: argparse.Namespace) -> RunConfig:
         "recipe_tag": recipe_tag,
         "mode": "explore" if explore else "eval",
         "memory_profile": memory_profile,
+        "prompt_profile": getattr(args, "prompt_profile", "full"),
         "memory_dir": str(memory_dir),
         "reference_tag": f"{args.suite.replace('libero_', '')}_t{args.task}_s0",
         # Per-cell inbox: parallel explore runs must not append to a shared file.
