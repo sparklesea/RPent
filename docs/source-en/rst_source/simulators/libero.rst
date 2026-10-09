@@ -179,6 +179,25 @@ A LIBERO run uses the following task settings:
 Run a Task
 ----------
 
+Experimental Prompt and Pair Modes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--prompt-profile compact`` selects a shorter evaluation prompt with concise
+decisions, selective memory reading, short VLA grasp instructions and
+observation-based recovery. ``full`` remains the default. Compact is evaluation
+only and cannot be combined with ``--explore``. Record this profile alongside
+benchmark results; it changes planner policy, not the native success predicate.
+
+For API planner ablations, ``RPENT_PAIR_MODE=open_loop`` or ``guarded`` exposes
+``action_pair``. Open-loop executes the second primitive if the episode remains
+active. Guarded mode additionally checks the first primitive's local result and
+robot measurements. These checks do not establish semantic object identity or
+correct placement. ``RPENT_STRICT_PAIR=1`` hides direct ``move_to``/``move_pose``.
+The earlier translation-only experiment uses ``RPENT_ENABLE_MOVE_PAIR=1``.
+Unset these flags for ordinary runs and for the staged planner. For phase
+planning with model-based verification, see :doc:`../guides/configure_planner`.
+
+
 Complete the model setup above and configure a planner with :doc:`../guides/configure_planner`. This command runs task 2 of ``libero_object_swap`` at seed 0.
 
 .. code-block:: bash

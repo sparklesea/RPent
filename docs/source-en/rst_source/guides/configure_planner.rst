@@ -7,9 +7,9 @@ Select the Agentic Planner backend with one CLI flag:
 
 .. code-block:: text
 
-   --planner {api,claude_code,codex,flash}
+   --planner {api,staged,claude_code,codex,flash}
 
-All three online planners receive the same rendered system and user prompts
+The api, claude_code, and codex planners receive the same rendered system and user prompts
 and use the RPent tool schemas from the same toolkit. They differ in
 how those schemas are connected to the model, how the tool-calling
 loop is orchestrated, and which model SDK is used.
@@ -296,7 +296,7 @@ it reports ``turns_used=0``.
 
 Other limits have different scopes:
 
-- ``--max-tokens`` caps each reply's tokens for ``api`` only (default ``8192``).
+- ``--max-tokens`` caps each reply's tokens for ``api`` and ``staged`` (default ``8192``).
   LIBERO-style tasks usually finish comfortably under this default;
   longer-horizon RoboCasa episodes benefit from raising it if your model
   supports it.
@@ -308,3 +308,68 @@ Reaching a turn limit stops the current loop; an interactive Claude session
 can still accept another query. The main program saves the transcript when
 the run ends. Timeouts or SDK exceptions are stored in the planner result
 and written to the log.
+
+
+The Experimental ``staged`` Planner
+------------------------------------
+
+``staged`` is available for non-interactive LIBERO evaluation with images. A
+supervisor model plans one phase of 1–5 concrete small steps, with acceptance
+criteria for each step. An executor model grounds and executes one primitive
+at a time, then checks the newest observation in a separate verification
+request. Both execution and verification use the executor model.
+
+Verification returns ``PASS``, ``FAIL``, or ``UNKNOWN``. A failed or uncertain
+check starts one local repair round with at most ``--repair-actions`` actions
+(default 3), each followed by another verification. If still unsuccessful, the
+runtime returns the failed criteria, repair history, current scene and
+confirmed completed steps to the supervisor. Exhausted tool/decision validation
+retries in execution or verification become ``UNKNOWN`` and consume the same
+local repair budget; provider failures retain their separate error outcome.
+Position and gripper measurements
+are evidence, not proof of object identity or successful placement.
+
+The runtime carries previously read memory, recent perception results and the
+last action into later decisions. Each perception result retains its observation
+index; moved objects still require fresh localization. Workflow step indices
+are separate from environment observation indices.
+
+Both models, perception, repairs, and robot tools consume one
+``--planner-timeout-s`` deadline (default ``CELL_TIMEOUT_S`` or 1200 seconds).
+``--max-turns`` is a shared model-request budget including verification and SDK
+validation retries. Each response uses ``--max-tokens``. Model-reported success
+cannot complete a task; only the toolkit's native success predicate can do so.
+
+Configure the two endpoints independently without replacing provider-wide
+credentials. These variables must already be set in the launching shell:
+
+.. code-block:: bash
+
+   unset RPENT_PAIR_MODE RPENT_STRICT_PAIR RPENT_ENABLE_MOVE_PAIR
+   rpent --robot libero --libero-type pro \
+     --suite libero_object_task --task 1 --seed 0 \
+     --planner staged --prompt-profile compact \
+     --model openai:gpt-6-astra --base-url "$RPENT_BASE_URL" \
+     --api-key-env RPENT_API_KEY \
+     --executor-model openai-chat:qwen3.6-27b \
+     --executor-base-url "$INFINI_BASE_URL" --executor-api-key-env INFINI_API_KEY \
+     --max-tokens 32768 --max-turns 300 --planner-timeout-s 1200 \
+     --repair-actions 3 --output-dir results/staged-probe
+
+For OpenAI-compatible roles, gateway root URLs and URLs ending in ``/maas``
+are normalized to ``/v1`` and ``/maas/v1``; explicit custom paths are preserved.
+
+The executor endpoint may instead be a local OpenAI-compatible multimodal
+server; set its model, URL, and credential variable accordingly. This does not
+change the motor policy: the existing Pi0.5 and simulator services are reused.
+Compound pair tools, resets, arbitrary file writes and model-controlled
+``finish`` are excluded from this mode. The runtime saves the audit and owns
+``finish``. Exploration, terminal interaction, and Dashboard sessions are not
+supported by this experimental planner.
+
+``<recipe_tag>_staged.json`` contains plans, checks, repair/handoff events, and
+request/tool timings with model roles. Failed and cancelled requests retain
+their duration; tokens are recorded only when returned by the provider. The
+usual runner transcript and state artifacts are also saved. These records
+support evaluating success, latency and cost; this mode has no established
+80-task benchmark result yet.
