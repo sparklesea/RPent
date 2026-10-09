@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 import sys
 from typing import TYPE_CHECKING, Any
@@ -105,6 +106,20 @@ def build_env_cfg(
     return cfg
 
 
+def _load_libero_backend() -> tuple[type, Any]:
+    """Resolve the current RLinf layout, retaining the installed legacy layout."""
+    namespace = "rlinf.envs.sim.libero"
+    try:
+        backend = importlib.import_module(f"{namespace}.libero_env")
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"rlinf.envs.sim", "rlinf.envs.sim.libero"}:
+            raise
+        namespace = "rlinf.envs.libero"
+        backend = importlib.import_module(f"{namespace}.libero_env")
+    utilities = importlib.import_module(f"{namespace}.utils")
+    return backend.LiberoEnv, utilities.benchmark
+
+
 def make_env(
     task_id: int,
     seed: int,
@@ -112,8 +127,7 @@ def make_env(
     max_episode_steps: int = 10000,
 ) -> LiberoEnv:
     """Build a single-env LiberoEnv pinned to ``task_id`` / ``seed``."""
-    from rlinf.envs.sim.libero.libero_env import LiberoEnv
-    from rlinf.envs.sim.libero.utils import benchmark as _bench_mod
+    LiberoEnv, _bench_mod = _load_libero_backend()
 
     suite = _bench_mod.get_benchmark(suite_name)()
     first_id = sum(len(suite.get_task_init_states(t)) for t in range(task_id))
