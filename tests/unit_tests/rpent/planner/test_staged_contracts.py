@@ -73,6 +73,7 @@ class Scene(Toolkit):
     def observe(self, step=-1):
         return {
             "task_language": "Put the mug in the basket",
+            "step": len(self.actions),
             "state": {"x": len(self.actions)},
             "terminated": self.solved(),
             "truncated": False,
@@ -199,6 +200,69 @@ def test_unknown_repairs_locally_then_escalates_with_failed_checks(tmp_path):
     assert len(handoff["evidence"]["attempts"]) == 2
     # The next supervisor receives repair evidence as well as the new image/state.
     assert "UNKNOWN" in str(supervisor[1]) and "FAIL" in str(supervisor[1])
+
+
+def test_phase_handoff_preserves_read_evidence_and_environment_index(tmp_path):
+    scene = Scene(solve_after=2)
+
+    @readonly
+    def read_memory(path):
+        return {"path": path, "content": "Confirm blue mug identity"}
+
+    @readonly
+    def back_project(step):
+        return {"step": step, "world_xyz": [0.1, 0.2, 0.3]}
+
+    for name, handler, properties in [
+        ("read_text_file", read_memory, {"path": {"type": "string"}}),
+        ("back_project", back_project, {"step": {"type": "integer"}}),
+    ]:
+        scene.add_tool(
+            name,
+            {
+                "name": name,
+                "input_schema": {"type": "object", "properties": properties},
+            },
+            handler,
+        )
+    calls = []
+
+    async def supervisor(messages, info):
+        calls.append(messages)
+        if len(calls) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("read_text_file", {"path": "memory.md"}),
+                    ToolCallPart("back_project", {"step": 0}),
+                ]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, phase("Carry"))]
+        )
+
+    executor_calls = []
+    planner = StagedPlanner(
+        supervisor_model=FunctionModel(supervisor),
+        executor_model=scripted([action(1), check("PASS"), action(2)], executor_calls),
+        output_dir=tmp_path,
+        recipe_tag="task",
+        dashboard_events=NullDashboardEventSink(),
+    )
+    result = planner.solve(
+        system_prompt="", user_message="task", toolkit=scene, max_turns=20
+    )
+    assert result.finish_result["status"] == "success"
+    received = str(calls[2])
+    assert "Confirm blue mug identity" in received and "world_xyz" in received
+    assert '"environment_step": 1' in received and '"phase_step": 0' in received
+    assert '"last_action": {"tool": "move_to"' in received
+    assert (
+        sum(
+            event.get("tool") == "read_text_file" and event["type"] == "tool_call"
+            for event in result.messages
+        )
+        == 1
+    )
 
 
 def test_pass_cannot_override_tool_error_or_native_failure(tmp_path):

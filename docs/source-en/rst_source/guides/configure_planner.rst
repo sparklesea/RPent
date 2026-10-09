@@ -326,6 +326,11 @@ runtime returns the failed criteria, repair history, current scene and
 confirmed completed steps to the supervisor. Position and gripper measurements
 are evidence, not proof of object identity or successful placement.
 
+The runtime carries previously read memory, recent perception results and the
+last action into later decisions. Each perception result retains its observation
+index; moved objects still require fresh localization. Workflow step indices
+are separate from environment observation indices.
+
 Both models, perception, repairs, and robot tools consume one
 ``--planner-timeout-s`` deadline (default ``CELL_TIMEOUT_S`` or 1200 seconds).
 ``--max-turns`` is a shared model-request budget including verification and SDK

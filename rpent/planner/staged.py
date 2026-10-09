@@ -38,6 +38,14 @@ from rpent.planner.base import REASONING_EFFORTS, Planner, PlannerResult
 from rpent.tools.toolkit import Toolkit, ToolResult
 from rpent.utils.logging import get_logger
 
+CONTEXT_RULES = """phase_step is a workflow index, not an environment observation
+index. For current perception use environment_step or step=-1. Reuse the
+supplied memory_reads instead of rereading the same files. perception_evidence
+contains prior observations with their environment step: reuse stationary
+geometry, but re-ground moved objects. Check supervisor identity and measured
+geometry against low-confidence segment results; do not silently replace them.
+"""
+
 DecisionT = TypeVar("DecisionT", bound=BaseModel)
 
 logger = get_logger("staged")
@@ -153,7 +161,7 @@ class StagedPlanner(Planner):
         timeout_s: float = 1200,
         reasoning_effort: str = "none",
         repair_actions: int = 3,
-        perception_calls: int = 6,
+        perception_calls: int = 12,
     ):
         if (
             max_tokens < 1
@@ -224,6 +232,8 @@ class _StagedSession:
         self.messages: list[dict] = []
         self.last_observation: ToolResult | None = None
         self.last_action: dict | None = None
+        self.memory_reads: dict[str, dict] = {}
+        self.perception_evidence: list[dict] = []
         self.completed: list[dict] = []
         self.handoff: dict | None = None
         self.phase = 0
@@ -267,6 +277,15 @@ class _StagedSession:
                 finished_at=utc_now(), duration_s=time.perf_counter() - started
             )
         self.emit("tool_result", role=role, tool=name, content=self.text(result))
+        if name == "read_text_file" and not result.result.get("error"):
+            self.memory_reads[arguments["path"]] = {
+                "path": arguments["path"],
+                "text": self.text(result),
+            }
+        elif name in {"segment", "back_project", "view_camera_meta"}:
+            self.perception_evidence.append(
+                {"tool": name, "arguments": arguments, "result": self.text(result)}
+            )
         if (name == "view_env_state" and role == "runtime") or name in ACTION_TOOLS:
             self.last_observation = result
         if name in ACTION_TOOLS:
@@ -337,7 +356,12 @@ class _StagedSession:
             model,
             output_type=output_type,
             tools=tools,
-            system_prompt=self.system_prompt + "\n\nROLE OVERRIDE:\n" + instructions,
+            system_prompt=(
+                self.system_prompt
+                + "\n\nROLE OVERRIDE:\n"
+                + instructions
+                + CONTEXT_RULES
+            ),
             model_settings=_build_model_settings(model, self.planner.max_tokens),
             retries=2,
             capabilities=[
@@ -351,7 +375,20 @@ class _StagedSession:
         )
         prompt = [
             json.dumps(
-                {"task": self.task, "phase": self.phase, "step": self.step, **context},
+                {
+                    "task": self.task,
+                    "phase": self.phase,
+                    "phase_step": self.step,
+                    "environment_step": (
+                        self.last_observation.result.get("step", -1)
+                        if self.last_observation
+                        else -1
+                    ),
+                    "last_action": self.last_action,
+                    "memory_reads": list(self.memory_reads.values()),
+                    "perception_evidence": self.perception_evidence[-20:],
+                    **context,
+                },
                 ensure_ascii=False,
             )
         ]
