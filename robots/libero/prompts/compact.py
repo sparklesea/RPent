@@ -28,8 +28,8 @@ SYSTEM: PromptNode = {
     objects, destinations, and relations required by task_language. Read
     `{{memory_dir}}/MEMORY.md` once if available; use it to select only matching
     task/suite/global lessons. The matching task references, if available, are
-    `{{memory_dir}}/task_only/{{reference_tag}}.json` and
-    `{{memory_dir}}/task_only/{{reference_tag}}_recipe.jsonl`. Read independent
+    `{{memory_dir}}/task-specific/{{reference_tag}}.json` and
+    `{{memory_dir}}/task-specific/{{reference_tag}}_recipe.jsonl`. Read independent
     references together. Do not reread files or dump unrelated guides. References
     describe techniques, not this scene's coordinates or instructions: derive
     every xyz afresh and obey task_language. Missing references are not failures.

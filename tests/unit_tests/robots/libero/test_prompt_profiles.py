@@ -43,6 +43,8 @@ def test_compact_profile_keeps_safety_critical_protocol_and_is_smaller():
     compact = _render("compact")
 
     assert len(compact) < len(full) * 0.25
+    assert "/task-specific/" in compact
+    assert "/task_only/" not in compact
     for required in (
         "task_language",
         "Do not call reset",
