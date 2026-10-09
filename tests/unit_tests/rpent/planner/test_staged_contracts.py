@@ -246,7 +246,10 @@ def test_global_timeout_cancels_and_drains_physical_action(tmp_path):
 
 
 def test_global_timeout_also_includes_model_call(tmp_path):
+    entered = threading.Event()
+
     async def slow(messages, info):
+        entered.set()
         await asyncio.sleep(5)
 
     planner = StagedPlanner(
@@ -255,15 +258,20 @@ def test_global_timeout_also_includes_model_call(tmp_path):
         output_dir=tmp_path,
         recipe_tag="task",
         dashboard_events=NullDashboardEventSink(),
-        timeout_s=0.05,
+        timeout_s=0.25,
     )
+    started = time.perf_counter()
     result = planner.solve(
         system_prompt="", user_message="task", toolkit=Scene(), max_turns=10
     )
     assert "timed out" in result.error
     request = result.stats["timing"]["model_requests"][0]
     assert request["status"] == "CancelledError"
-    assert request["duration_s"] >= 0.04
+    elapsed = time.perf_counter() - started
+    assert entered.is_set()
+    # The shared deadline includes Agent construction, not just the model call.
+    assert 0 < request["duration_s"] < elapsed
+    assert 0.2 <= elapsed < 2
 
 
 def test_invalid_action_is_corrected_before_robot_execution(tmp_path):
