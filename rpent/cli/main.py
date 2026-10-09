@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import shlex
 import sys
@@ -130,15 +131,16 @@ def _build_argparser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--planner",
         default="api",
-        choices=["api", "claude_code", "codex", "flash"],
-        help="Planner backend: api | claude_code | codex are LLMs in the "
+        choices=["api", "staged", "claude_code", "codex", "flash"],
+        help="Planner backend: staged uses a supervisor/executor for LIBERO; "
+        "api | claude_code | codex are LLMs in the "
         "loop; flash is evaluation-only and replays a plan from memory, re-localizing "
         "each waypoint's anchor.",
     )
     ap.add_argument(
         "--model",
         default=None,
-        help="Model id. For the 'api' planner, prefix the provider "
+        help="Model id. For api or the staged supervisor, prefix the provider "
         "(e.g. anthropic:claude-opus-4-8, openai:gpt-5.5, "
         "openai-chat:glm-5.2). For claude_code/codex this "
         "overrides the backend default model.",
@@ -147,8 +149,27 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--base-url",
         default=None,
         help=(
-            "API base URL, for the 'api' planner only. claude_code and codex take their endpoint from ANTHROPIC_BASE_URL / CODEX_BASE_URL instead; passing this flag with either is an error rather than a silent no-op."
+            "API base URL for api or the staged supervisor. claude_code and codex take their endpoint from ANTHROPIC_BASE_URL / CODEX_BASE_URL instead; passing this flag with either is an error rather than a silent no-op."
         ),
+    )
+    ap.add_argument(
+        "--executor-model", help="Executor/verifier model for --planner staged."
+    )
+    ap.add_argument(
+        "--executor-base-url", help="Executor endpoint for --planner staged."
+    )
+    ap.add_argument(
+        "--api-key-env", help="Supervisor credential env name for --planner staged."
+    )
+    ap.add_argument(
+        "--executor-api-key-env",
+        help="Executor credential env name for --planner staged.",
+    )
+    ap.add_argument(
+        "--repair-actions",
+        type=int,
+        default=3,
+        help="Maximum local repair actions per staged step (default: 3).",
     )
     ap.add_argument("--max-turns", type=int, default=100)
     ap.add_argument("--max-tokens", type=int, default=8192)
@@ -156,7 +177,7 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--reasoning-effort",
         choices=REASONING_EFFORTS,
         default="none",
-        help="Planner reasoning effort for api, claude_code, and "
+        help="Planner reasoning effort for api, staged, claude_code, and "
         "codex. Higher effort may improve task success rate "
         "but increases runtime. Defaults to none.",
     )
@@ -172,7 +193,7 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--planner-timeout-s",
         type=int,
         default=None,
-        help="Wall-clock cap for api/claude_code/codex planner runs. "
+        help="Wall-clock cap for api/staged/claude_code/codex planner runs. "
         "Terminal interactive API/Claude sessions are exempt. "
         "Defaults to CODEX_TIMEOUT_S (codex only), "
         "CELL_TIMEOUT_S, or 1200.",
@@ -307,6 +328,11 @@ def _start_continuation_session(
         dashboard_events=dashboard_events,
         no_images=args.no_images,
         interactive=args.interactive,
+        executor_model=getattr(args, "executor_model", None),
+        executor_base_url=getattr(args, "executor_base_url", None),
+        api_key_env=getattr(args, "api_key_env", None),
+        executor_api_key_env=getattr(args, "executor_api_key_env", None),
+        repair_actions=getattr(args, "repair_actions", 3),
     )
     system_prompt = prompt_bundle.render(
         "system",
@@ -374,6 +400,36 @@ def main() -> int:
             )
         if sys.stdin is None or not sys.stdin.isatty():
             parser.error("This robot requires a TTY for operator confirmation.")
+    if args.planner == "staged":
+        if (
+            args.robot_name != "libero"
+            or args.explore
+            or args.dashboard
+            or args.interactive
+            or args.no_images
+        ):
+            parser.error(
+                "staged requires non-interactive LIBERO evaluation with images"
+            )
+        if not args.executor_model:
+            parser.error("staged requires --executor-model")
+        if (
+            os.environ.get("RPENT_PAIR_MODE")
+            or os.environ.get("RPENT_STRICT_PAIR") == "1"
+        ):
+            parser.error(
+                "staged verifies individual primitives; unset RPENT_PAIR_MODE/RPENT_STRICT_PAIR"
+            )
+    elif any(
+        getattr(args, name, None)
+        for name in (
+            "executor_model",
+            "executor_base_url",
+            "api_key_env",
+            "executor_api_key_env",
+        )
+    ):
+        parser.error("executor/credential options require --planner staged")
     native_cli = args.interactive and args.planner == "api"
     if args.base_url and args.planner in BASE_URL_ENV_BY_PLANNER:
         parser.error(
@@ -460,6 +516,11 @@ def main() -> int:
         dashboard_events=dashboard_events,
         no_images=args.no_images,
         interactive=args.interactive,
+        executor_model=getattr(args, "executor_model", None),
+        executor_base_url=getattr(args, "executor_base_url", None),
+        api_key_env=getattr(args, "api_key_env", None),
+        executor_api_key_env=getattr(args, "executor_api_key_env", None),
+        repair_actions=getattr(args, "repair_actions", 3),
     )
     prompt_bundle = robot_spec.prompts
     prompt_vars = {**prompt_vars, "output_dir": output_dir}

@@ -5,7 +5,7 @@ RPent 通过一个 CLI 参数选择 Agentic Planner 的后端：
 
 .. code-block:: text
 
-   --planner {api,claude_code,codex,flash}
+   --planner {api,staged,claude_code,codex,flash}
 
 三种在线规划器（``api``、``claude_code`` 和 ``codex``）接收相同的系统提示词和用户提示词，也使用同一套 RPent 工具定义。它们的区别在于如何将这些工具接入模型、如何组织工具调用循环，以及使用哪个模型 SDK。
 
@@ -200,7 +200,38 @@ Claude 交互模式下，每次新增用户输入都会获得新的轮数预算�
 
 其他限制的作用范围不同：
 
-- ``--max-tokens`` 仅限制 ``api`` 每次回复的 token 数，默认 ``8192``。LIBERO 类任务通常使用这个默认值即可；RoboCasa 的长时序任务可以在模型支持的范围内调大。
+- ``--max-tokens`` 限制 ``api`` 和 ``staged`` 每次回复的 token 数，默认 ``8192``。LIBERO 类任务通常使用这个默认值即可；RoboCasa 的长时序任务可以在模型支持的范围内调大。
 - ``--planner-timeout-s`` 限制规划器的运行时间；各后端的默认值及交互模式行为见上文。
 
 模型调用 ``finish`` 后，规划器会记录结束状态。达到轮数上限时，当前循环停止；Claude 交互会话仍可接收下一次 query。运行结束时，主程序会保存对话记录。超时或 SDK 异常会写入规划器结果，并输出到日志。
+
+
+实验性 ``staged`` 分层规划器
+--------------------------------------------------
+
+``staged`` 目前支持带图像的非交互式 LIBERO 评测。监督模型一次规划一个阶段，包含 1–5 个具体小步骤及各自的验收标准。执行模型根据当前场景确定工具参数，每次执行一个机器人原语，再通过单独的验证请求检查最新观测。动作选择和验证都使用执行模型。
+
+验证结果为 ``PASS``、``FAIL`` 或 ``UNKNOWN``。未通过或无法确认时，先进入一轮局部修正，最多执行 ``--repair-actions`` 个修正动作（默认 3 个），每个动作后再次验证。仍未通过时，将失败标准、修正历史、当前场景和已确认完成的步骤交回监督模型重新规划。位姿和夹爪开度只能作为证据，不能单独证明抓对物体或放置成功。
+
+两个模型、感知、修正和机器人工具共同使用一个 ``--planner-timeout-s`` 总时限，默认取 ``CELL_TIMEOUT_S`` 或 1200 秒。``--max-turns`` 是共享的模型请求次数上限，包含验证和 SDK 格式校验重试；``--max-tokens`` 限制每次回复。整个任务的成功只由环境原生成功信号决定，模型自报成功不能替代这一判定。
+
+两个服务可独立配置，无需覆盖服务提供方的全局凭证。启动前需在当前 shell 中设置以下命令使用的环境变量：
+
+.. code-block:: bash
+
+   unset RPENT_PAIR_MODE RPENT_STRICT_PAIR RPENT_ENABLE_MOVE_PAIR
+   rpent --robot libero --libero-type pro \
+     --suite libero_object_task --task 1 --seed 0 \
+     --planner staged --prompt-profile compact \
+     --model openai:gpt-6-astra --base-url "$RPENT_BASE_URL" \
+     --api-key-env RPENT_API_KEY \
+     --executor-model openai-chat:qwen3.6-27b \
+     --executor-base-url "$INFINI_BASE_URL" --executor-api-key-env INFINI_API_KEY \
+     --max-tokens 32768 --max-turns 300 --planner-timeout-s 1200 \
+     --repair-actions 3 --output-dir results/staged-probe
+
+对兼容 OpenAI 的服务，网关根 URL 和以 ``/maas`` 结尾的 URL 会分别补成 ``/v1`` 和 ``/maas/v1``；显式指定的其他路径保持不变。
+
+执行模型也可以使用本地兼容 OpenAI 的多模态服务，相应修改模型名、URL 和凭证变量名即可。动作控制仍复用现有 Pi0.5 和仿真服务。本模式不开放双动作工具、reset、任意文件写入或由模型调用的 ``finish``；审计文件和 ``finish`` 由程序负责。目前不支持探索模式、终端交互和 Dashboard 会话。
+
+``<recipe_tag>_staged.json`` 保存阶段计划、验证、修正和交接事件，以及按模型角色标记的请求和工具耗时。失败或取消的请求也记录耗时；token 只统计服务返回的用量。常规 runner 的对话和状态文件也会保存。这些记录可用于评估成功率、时间和费用；本模式尚无完整 80 任务的实测结果。

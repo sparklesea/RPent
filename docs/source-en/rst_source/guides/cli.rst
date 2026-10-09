@@ -27,16 +27,16 @@ These options control the planner, memory, output directory, and Dashboard.
      - Select a discovered robot or simulator.
    * - ``--planner``
      - ``api``
-     - ``api``, ``claude_code``, ``codex``, or ``flash``.
+     - ``api``, ``staged``, ``claude_code``, ``codex``, or ``flash``.
    * - ``--model``
      - ``—``
      - ``api`` requires a provider prefix; SDK planners use their backend defaults.
    * - ``--max-turns``
      - ``100``
-     - Planner turn limit. For ``api``, counts model requests across the conversation, including retries and follow-ups.
+     - Planner turn limit. For ``api``, counts model requests across the conversation, including retries and follow-ups. For ``staged``, shared by both models, including verification.
    * - ``--max-tokens``
      - ``8192``
-     - ``api`` only: token limit per model response.
+     - ``api`` and ``staged``: token limit per model response.
    * - ``--reasoning-effort``
      - ``none``
      - Reasoning effort for ``api``, ``claude_code``, and ``codex``:
@@ -50,7 +50,22 @@ These options control the planner, memory, output directory, and Dashboard.
      - Defaults to ``CODEX_TIMEOUT_S`` (Codex only), then ``CELL_TIMEOUT_S``, then 1200 seconds; terminal interactive API/Claude sessions are exempt.
    * - ``--base-url``
      - ``—``
-     - ``api`` only: override the model endpoint. SDK planners use their own environment variables.
+     - ``api`` endpoint or ``staged`` supervisor endpoint. SDK planners use their own environment variables.
+   * - ``--executor-model``
+     - ``—``
+     - Executor/verifier model for staged; requires a provider prefix.
+   * - ``--executor-base-url``
+     - ``—``
+     - Executor endpoint for staged.
+   * - ``--api-key-env``
+     - ``—``
+     - Supervisor credential environment variable name for staged.
+   * - ``--executor-api-key-env``
+     - ``—``
+     - Executor credential environment variable name for staged.
+   * - ``--repair-actions``
+     - ``3``
+     - Maximum local repair actions per staged step, before supervisor replanning.
    * - ``--no-images``
      - ``false``
      - ``api`` only: omit images from model requests.

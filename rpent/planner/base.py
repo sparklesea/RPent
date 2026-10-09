@@ -21,6 +21,7 @@ import queue
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from rpent.dashboard.events import DashboardEventSink
 from rpent.dashboard.interaction import DashboardInteractionPort
@@ -124,14 +125,16 @@ class Planner(ABC):
 # ---------------------------------------------------------------------------
 
 
-def build_api_model(model: str | None, base_url: str | None = None) -> "Model":
+def build_api_model(
+    model: str | None, base_url: str | None = None, *, api_key: str | None = None
+) -> "Model":
     """Resolve the pydantic-ai model used by the API planner.
 
     This is the single provider-resolution path: both :func:`build_planner`
     and the connectivity check in :mod:`rpent.planner.check` call it, so a
     passing check constructs the same model a real run will.
 
-    The API key is always read from the provider's own env vars (e.g.
+    By default the API key is read from the provider's own env vars (e.g.
     ``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``). When ``base_url`` is given it
     overrides the provider's base URL env var (e.g. ``ANTHROPIC_BASE_URL`` /
     ``OPENAI_BASE_URL``).
@@ -139,6 +142,7 @@ def build_api_model(model: str | None, base_url: str | None = None) -> "Model":
     Args:
         model: Provider-prefixed model id, e.g. ``anthropic:claude-opus-4-8``.
         base_url: Base URL overriding the provider's own env var.
+        api_key: Explicit credential for independently configured planner roles.
 
     Returns:
         The resolved pydantic-ai ``Model``.
@@ -160,13 +164,17 @@ def build_api_model(model: str | None, base_url: str | None = None) -> "Model":
 
     def _provider_factory(provider_name: str):
         """Build the provider for ``provider_name``."""
-        if not base_url:
+        if not base_url and api_key is None:
             return infer_provider(provider_name)
         provider_cls = infer_provider_class(provider_name)
         params = inspect.signature(provider_cls.__init__).parameters
         kwargs = {}
-        if "base_url" in params:
+        if base_url and "base_url" in params:
             kwargs["base_url"] = base_url
+        if api_key is not None:
+            if "api_key" not in params:
+                raise ValueError(f"{provider_name} does not accept an explicit API key")
+            kwargs["api_key"] = api_key
         return provider_cls(**kwargs)
 
     return infer_model(model, provider_factory=_provider_factory)
@@ -188,11 +196,59 @@ def build_planner(
     dashboard_events: DashboardEventSink,
     no_images: bool = False,
     interactive: bool = False,
+    executor_model: str | None = None,
+    executor_base_url: str | None = None,
+    api_key_env: str | None = None,
+    executor_api_key_env: str | None = None,
+    repair_actions: int = 3,
 ) -> Planner:
     """Build a planner for the given backend, resolving credentials from env vars."""
     # Imports are deferred to avoid a circular import: api_loop / claude_code /
     # codex all import from this module (PlannerResult).
 
+    if planner_type == "staged":
+        from rpent.planner.staged import StagedPlanner
+
+        if robot_name != "libero" or interactive or no_images:
+            raise ValueError(
+                "staged requires non-interactive LIBERO evaluation with images"
+            )
+        if not executor_model:
+            raise ValueError("staged requires --executor-model")
+
+        def credential(env_name):
+            if env_name is None:
+                return None
+            value = os.environ.get(env_name)
+            if not value:
+                raise ValueError(f"credential environment variable {env_name} is empty")
+            return value
+
+        def role_model(model_id: str | None, url: str | None, key_env: str | None):
+            # Existing experiment exports allow the gateway root or /maas.
+            if url and model_id and model_id.startswith(("openai:", "openai-chat:")):
+                parsed = urlsplit(url)
+                if parsed.path.rstrip("/") in {"", "/maas"}:
+                    url = parsed._replace(path=parsed.path.rstrip("/") + "/v1").geturl()
+            return build_api_model(model_id, url, api_key=credential(key_env))
+
+        return StagedPlanner(
+            supervisor_model=role_model(model, base_url, api_key_env),
+            executor_model=role_model(
+                executor_model, executor_base_url, executor_api_key_env
+            ),
+            dashboard_events=dashboard_events,
+            output_dir=output_dir,
+            recipe_tag=recipe_tag,
+            max_tokens=max_tokens,
+            timeout_s=(
+                planner_timeout_s
+                if planner_timeout_s is not None
+                else int(os.environ.get("CELL_TIMEOUT_S", "1200"))
+            ),
+            reasoning_effort=reasoning_effort,
+            repair_actions=repair_actions,
+        )
     if planner_type == "api":
         from rpent.planner.api_loop import ApiAgentLoop
 

@@ -27,16 +27,16 @@
      - 选择已发现的机器人或仿真环境。
    * - ``--planner``
      - ``api``
-     - ``api``、``claude_code``、``codex`` 或 ``flash``。
+     - ``api``、``staged``、``claude_code``、``codex`` 或 ``flash``。
    * - ``--model``
      - ``—``
      - ``api`` 要求服务提供方前缀；SDK 规划器使用各自默认值。
    * - ``--max-turns``
      - ``100``
-     - 规划器轮数上限；``api`` 按整段对话的模型请求次数计算，包括重试和后续输入。
+     - 规划器轮数上限；``api`` 按整段对话的模型请求次数计算，包括重试和后续输入。``staged`` 的两个模型共享该上限，包含验证请求。
    * - ``--max-tokens``
      - ``8192``
-     - 仅 ``api``：每次模型回复的 Token 上限。
+     - ``api`` 和 ``staged``：每次模型回复的 token 上限。
    * - ``--reasoning-effort``
      - ``none``
      - ``api``、``claude_code`` 与 ``codex`` 的推理强度：``none``、``low``、``medium``、``high`` 或 ``xhigh``。在我们的 LIBERO Pro Long 评测中，关闭 reasoning 将平均运行时间从约 13.2 分钟缩短至 7.9 分钟（约 40%）。较高强度可能提升任务成功率；实际支持的档位取决于所选模型。
@@ -45,7 +45,22 @@
      - 默认使用 ``CODEX_TIMEOUT_S`` （仅 Codex）、``CELL_TIMEOUT_S`` 或 1200 秒；终端交互式 API/Claude 会话不受此限。
    * - ``--base-url``
      - ``—``
-     - 仅 ``api``：覆盖模型服务地址。SDK 规划器使用各自的环境变量。
+     - 覆盖 ``api`` 或 ``staged`` 监督模型的服务地址。SDK 规划器使用各自的环境变量。
+   * - ``--executor-model``
+     - ``—``
+     - staged 执行及验证模型，需带服务提供方前缀。
+   * - ``--executor-base-url``
+     - ``—``
+     - staged 执行模型服务地址。
+   * - ``--api-key-env``
+     - ``—``
+     - staged 监督模型的凭证环境变量名。
+   * - ``--executor-api-key-env``
+     - ``—``
+     - staged 执行模型的凭证环境变量名。
+   * - ``--repair-actions``
+     - ``3``
+     - staged 每个步骤最多执行的局部修正动作数，仍失败则交回监督模型。
    * - ``--no-images``
      - ``false``
      - 仅 ``api``：不向模型发送图像。
