@@ -281,6 +281,69 @@ def test_pass_cannot_override_tool_error_or_native_failure(tmp_path):
     assert checked["passed"] is False
 
 
+def test_invalid_verifier_tool_arguments_become_unknown_and_allow_local_repair(
+    tmp_path,
+):
+    scene = Scene(solve_after=2)
+
+    @readonly
+    def back_project(row):
+        pytest.fail("Invalid tool arguments must not reach the handler")
+
+    scene.add_tool(
+        "back_project",
+        {
+            "name": "back_project",
+            "input_schema": {
+                "type": "object",
+                "properties": {"row": {"type": "integer"}},
+                "required": ["row"],
+            },
+        },
+        back_project,
+    )
+    calls = []
+
+    async def executor(messages, info):
+        calls.append(messages)
+        if 2 <= len(calls) <= 4:
+            return ModelResponse(parts=[ToolCallPart("back_project", {"row": "bad"})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(info.output_tools[0].name, action(len(scene.actions) + 1))
+            ]
+        )
+
+    planner = StagedPlanner(
+        supervisor_model=scripted([phase("Carry")], []),
+        executor_model=FunctionModel(executor),
+        output_dir=tmp_path,
+        recipe_tag="task",
+        dashboard_events=NullDashboardEventSink(),
+        repair_actions=1,
+    )
+    result = planner.solve(
+        system_prompt="", user_message="task", toolkit=scene, max_turns=20
+    )
+    assert result.error is None and result.finish_result["status"] == "success"
+    assert scene.actions == [1, 2]
+    failed_check = next(
+        event for event in result.messages if event["type"] == "step_check"
+    )
+    assert failed_check["assessment"]["verdict"] == "UNKNOWN"
+    assert "max retries" in failed_check["tool_error"]
+    assert any(event["type"] == "repair_start" for event in result.messages)
+    assert any(
+        event["type"] == "validation_retry" and "integer" in event["feedback"]
+        for event in result.messages
+    )
+    assert any(
+        event["type"] == "model_tool_call" and event["arguments"] == {"row": "bad"}
+        for event in result.messages
+    )
+    assert '"tool": "move_to"' in str(calls[-1])
+
+
 def test_model_failure_retains_usage_and_is_not_task_success(tmp_path):
     result, scene, _, _ = solve(
         tmp_path, [phase("Carry")], [RuntimeError("provider unavailable")]

@@ -323,7 +323,10 @@ Verification returns ``PASS``, ``FAIL``, or ``UNKNOWN``. A failed or uncertain
 check starts one local repair round with at most ``--repair-actions`` actions
 (default 3), each followed by another verification. If still unsuccessful, the
 runtime returns the failed criteria, repair history, current scene and
-confirmed completed steps to the supervisor. Position and gripper measurements
+confirmed completed steps to the supervisor. Exhausted tool/decision validation
+retries in execution or verification become ``UNKNOWN`` and consume the same
+local repair budget; provider failures retain their separate error outcome.
+Position and gripper measurements
 are evidence, not proof of object identity or successful placement.
 
 The runtime carries previously read memory, recent perception results and the

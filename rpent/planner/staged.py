@@ -26,9 +26,17 @@ from typing import Any, Literal, TypeVar
 
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, Field, model_validator
-from pydantic_ai import Agent, BinaryContent, ModelRetry, Tool, ToolReturn
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    ModelRetry,
+    Tool,
+    ToolReturn,
+    capture_run_messages,
+)
 from pydantic_ai.capabilities import Thinking
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.messages import RetryPromptPart, ToolCallPart
 from pydantic_ai.models import Model
 
 from rpent.dashboard.events import DashboardEventSink, TranscriptEvent
@@ -412,7 +420,26 @@ class _StagedSession:
                     )
                 return output
 
-        result = await agent.run(prompt)
+        with capture_run_messages() as sdk_messages:
+            try:
+                result = await agent.run(prompt)
+            finally:
+                for message in sdk_messages:
+                    for part in message.parts:
+                        if isinstance(part, RetryPromptPart):
+                            self.emit(
+                                "validation_retry",
+                                role=role,
+                                tool=part.tool_name,
+                                feedback=part.model_response(),
+                            )
+                        elif isinstance(part, ToolCallPart):
+                            self.emit(
+                                "model_tool_call",
+                                role=role,
+                                tool=part.tool_name,
+                                arguments=part.args,
+                            )
         output = result.output
         self.emit("decision", role=role, output=output.model_dump())
         return output
@@ -450,47 +477,63 @@ class _StagedSession:
                 attempts = []
                 passed = False
                 for attempt in range(1 + self.planner.repair_actions):
-                    action = await self.ask(
-                        "executor",
-                        ActionRequest,
-                        EXECUTOR,
-                        {
-                            "goal": plan.goal,
-                            "phase_plan": plan.model_dump(),
-                            "confirmed_completed": self.completed[-10:],
-                            "instruction": step.model_dump(),
-                            "repair": attempt > 0,
-                            "prior_attempts": attempts,
-                            "action_schemas": [
-                                v for k, v in self.specs.items() if k in ACTION_TOOLS
-                            ],
-                        },
-                    )
-                    arguments = json.loads(action.arguments_json)
-                    if action.tool not in self.specs:
-                        raise ValueError(f"primitive unavailable: {action.tool}")
-                    result = await self.execute(action.tool, arguments, role="executor")
-                    if self.ended():
-                        return
-                    # Stateful LIBERO tools already return the captured observation.
-                    assessment = await self.ask(
-                        "verifier",
-                        StepAssessment,
-                        VERIFIER,
-                        {
-                            "goal": plan.goal,
-                            "instruction": step.model_dump(),
-                            "action": self.last_action,
-                            "repair": attempt > 0,
-                        },
-                    )
-                    raw = result.result
-                    primitive_result = raw.get("log", {}).get("result", raw)
-                    errored = raw.get("error") or primitive_result.get("error")
+                    attempted_action = None
+                    try:
+                        action = await self.ask(
+                            "executor",
+                            ActionRequest,
+                            EXECUTOR,
+                            {
+                                "goal": plan.goal,
+                                "phase_plan": plan.model_dump(),
+                                "confirmed_completed": self.completed[-10:],
+                                "instruction": step.model_dump(),
+                                "repair": attempt > 0,
+                                "prior_attempts": attempts,
+                                "action_schemas": [
+                                    v
+                                    for k, v in self.specs.items()
+                                    if k in ACTION_TOOLS
+                                ],
+                            },
+                        )
+                        arguments = json.loads(action.arguments_json)
+                        if action.tool not in self.specs:
+                            raise ValueError(f"primitive unavailable: {action.tool}")
+                        result = await self.execute(
+                            action.tool, arguments, role="executor"
+                        )
+                        attempted_action = self.last_action
+                        if self.ended():
+                            return
+                        # Stateful LIBERO tools already return the captured observation.
+                        assessment = await self.ask(
+                            "verifier",
+                            StepAssessment,
+                            VERIFIER,
+                            {
+                                "goal": plan.goal,
+                                "instruction": step.model_dump(),
+                                "action": self.last_action,
+                                "repair": attempt > 0,
+                            },
+                        )
+                        raw = result.result
+                        primitive_result = raw.get("log", {}).get("result", raw)
+                        errored = raw.get("error") or primitive_result.get("error")
+                    except UnexpectedModelBehavior as exc:
+                        errored = str(exc)
+                        assessment = StepAssessment(
+                            verdict="UNKNOWN",
+                            evidence="Decision validation failed: " + errored,
+                        )
+                        self.emit(
+                            "decision_error", role="executor_or_verifier", error=errored
+                        )
                     passed = assessment.verdict == "PASS" and not errored
                     attempts.append(
                         {
-                            "action": self.last_action,
+                            "action": attempted_action,
                             "assessment": assessment.model_dump(),
                             "tool_error": errored,
                         }
