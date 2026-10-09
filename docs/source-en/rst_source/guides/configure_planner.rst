@@ -296,7 +296,7 @@ it reports ``turns_used=0``.
 
 Other limits have different scopes:
 
-- ``--max-tokens`` caps each reply's tokens for ``api`` only (default ``8192``).
+- ``--max-tokens`` caps each reply's tokens for ``api`` and ``staged`` (default ``8192``).
   LIBERO-style tasks usually finish comfortably under this default;
   longer-horizon RoboCasa episodes benefit from raising it if your model
   supports it.
