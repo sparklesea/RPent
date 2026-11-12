@@ -73,6 +73,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
+
+from rpent.planner.usage import merge_request_usage, usage_log_fields, usage_values
 
 SELECTOR_LABEL = "[candidate verifier]"
 
@@ -414,6 +417,7 @@ class CandidateSelectionModel(WrapperModel):
             )
             raise
         self.worker_calls += len(responses)
+        worker_usage = merge_request_usage(response.usage for response in responses)
         records = [_candidate_record(response) for response in responses]
         valid = [index for index, record in enumerate(records) if record["tool_calls"]]
         generated_at = round(time.monotonic() - started, 3)
@@ -423,11 +427,14 @@ class CandidateSelectionModel(WrapperModel):
             "valid_count": len(valid),
             "candidates": records,
             "worker_latency_s": generated_at,
+            "candidate_usage": [usage_values(response.usage) for response in responses],
+            **usage_log_fields("worker", worker_usage),
         }
         if not valid:
             self.fallbacks += 1
             self._log(
                 row
+                | usage_log_fields("total", worker_usage)
                 | {
                     "selected": 1,
                     "selected_candidate": 1,
@@ -436,10 +443,11 @@ class CandidateSelectionModel(WrapperModel):
                     "latency_s": generated_at,
                 }
             )
-            return responses[0]
+            return dataclasses.replace(responses[0], usage=worker_usage)
 
         selected_records = [records[index] for index in valid]
         gate_record: dict[str, Any] = {}
+        gate_usage: RequestUsage | None = None
         if self.gate_selector is not None:
             gate_note = _render_candidates(selected_records, allow_none=True)
             gate_started = time.monotonic()
@@ -451,6 +459,7 @@ class CandidateSelectionModel(WrapperModel):
                     ),
                     ModelRequestParameters(),
                 )
+                gate_usage = gate_choice.usage
                 self.gate_calls += 1
                 gate_selection, gate_none, gate_reason = _parse_gate_selection(
                     _response_text(gate_choice), len(valid)
@@ -460,6 +469,7 @@ class CandidateSelectionModel(WrapperModel):
                     "gate_latency_s": round(time.monotonic() - gate_started, 3),
                     "gate_selection": gate_selection,
                     "gate_reason": gate_reason,
+                    **usage_log_fields("gate", gate_usage),
                 }
                 if gate_selection is not None:
                     tool_agreement = _tool_agreement(
@@ -473,9 +483,11 @@ class CandidateSelectionModel(WrapperModel):
                     )
                     if tool_agreement >= self.gate_min_tool_agreement:
                         self.gate_selections += 1
+                        total_usage = merge_request_usage([worker_usage, gate_usage])
                         self._log(
                             row
                             | gate_record
+                            | usage_log_fields("total", total_usage)
                             | {
                                 "gate_decision": "select",
                                 "selected": gate_selection,
@@ -485,7 +497,10 @@ class CandidateSelectionModel(WrapperModel):
                                 "latency_s": round(time.monotonic() - started, 3),
                             }
                         )
-                        return responses[valid[gate_selection - 1]]
+                        return dataclasses.replace(
+                            responses[valid[gate_selection - 1]],
+                            usage=total_usage,
+                        )
                     self.gate_disagreements += 1
                     gate_record["gate_decision"] = "disagreement"
                 elif gate_none:
@@ -500,6 +515,7 @@ class CandidateSelectionModel(WrapperModel):
                     "gate_decision": "error",
                     "gate_error": f"{type(exc).__name__}: {exc}"[:2000],
                     "gate_latency_s": round(time.monotonic() - gate_started, 3),
+                    **usage_log_fields("gate", RequestUsage()),
                 }
 
         intro = None
@@ -522,9 +538,11 @@ class CandidateSelectionModel(WrapperModel):
             self.selector_calls += 1
         except Exception as exc:
             self.fallbacks += 1
+            total_usage = merge_request_usage([worker_usage, gate_usage])
             self._log(
                 row
                 | gate_record
+                | usage_log_fields("total", total_usage)
                 | {
                     "gpt_escalated": bool(gate_record),
                     "selected": 1,
@@ -535,7 +553,10 @@ class CandidateSelectionModel(WrapperModel):
                     "latency_s": round(time.monotonic() - started, 3),
                 }
             )
-            return responses[valid[0]]
+            return dataclasses.replace(
+                responses[valid[0]],
+                usage=total_usage,
+            )
 
         selection, reason = _parse_selection(_response_text(choice), len(valid))
         invalid = selection is None
@@ -543,9 +564,12 @@ class CandidateSelectionModel(WrapperModel):
             selection = 1
             self.fallbacks += 1
         selected_response = responses[valid[selection - 1]]
+        total_usage = merge_request_usage([worker_usage, gate_usage, choice.usage])
         self._log(
             row
             | gate_record
+            | usage_log_fields("selector", choice.usage)
+            | usage_log_fields("total", total_usage)
             | {
                 "gpt_escalated": bool(gate_record),
                 "selected": selection,
@@ -557,7 +581,7 @@ class CandidateSelectionModel(WrapperModel):
                 "latency_s": round(time.monotonic() - started, 3),
             }
         )
-        return selected_response
+        return dataclasses.replace(selected_response, usage=total_usage)
 
     @asynccontextmanager
     async def request_stream(

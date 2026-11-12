@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """ECC RoboTwin stage 2: search per-task cloud-call rules.
 
 Each task uses the stage-1 memory read-only and tries configurations from the
@@ -19,7 +33,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 EVALUATION_PATH = ROOT / "robots" / "robotwin" / "eval" / "demo_randomized.json"
 RUNNER = Path(__file__).resolve().parent / "run_ecc_stage2_episode.sh"
@@ -35,15 +48,17 @@ CONFIGS = [
 ]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run_ecc_stage1 import start_shared_vla, stop_shared_vla, utc_now, write_json
+from run_ecc_stage1 import (  # noqa: E402
+    start_shared_vla,
+    stop_shared_vla,
+    utc_now,
+    write_json,
+)
 
 
 def config_name(index: int, config: tuple[bool, int, int]) -> str:
     gpt_plan, checkin, errors = config
-    return (
-        f"c{index + 1}_{'gptplan' if gpt_plan else 'qwenplan'}_"
-        f"K{checkin}_N{errors}"
-    )
+    return f"c{index + 1}_{'gptplan' if gpt_plan else 'qwenplan'}_K{checkin}_N{errors}"
 
 
 def load_tasks(entry_index: int) -> list[dict[str, Any]]:
@@ -85,9 +100,7 @@ def parse_episode(output_dir: Path) -> dict[str, Any]:
         try:
             states = json.loads(states_path.read_text(encoding="utf-8"))
             environment_success = any(
-                (step.get("result") or {})
-                .get("episode_status", {})
-                .get("eval_success")
+                (step.get("result") or {}).get("episode_status", {}).get("eval_success")
                 is True
                 for step in reversed(states.get("steps") or [])
             )
@@ -247,7 +260,6 @@ def search_task(
             return existing_rule
         rule_path.unlink()
 
-    task_dir = run_dir / f"{task_name}_s{task['seed']}"
     history: list[dict[str, Any]] = []
     for index, config in enumerate(CONFIGS):
         name = config_name(index, config)
@@ -283,8 +295,7 @@ def search_task(
                     result.get("finish_status") for result in attempt_results
                 ],
                 "subprocess_timeout": any(
-                    bool(result.get("subprocess_timeout"))
-                    for result in attempt_results
+                    bool(result.get("subprocess_timeout")) for result in attempt_results
                 ),
             }
         )
@@ -334,11 +345,7 @@ def update_status(
     total: int,
     entry_index: int,
 ) -> None:
-    episodes = [
-        item
-        for rule in rules
-        for item in rule.get("history", [])
-    ]
+    episodes = [item for rule in rules for item in rule.get("history", [])]
     write_json(
         run_dir / "status.json",
         {
@@ -351,7 +358,9 @@ def update_status(
             "task_config": "demo_randomized",
             "planned_task_count": total,
             "finished_count": len(rules),
-            "solved_in_search_count": sum(bool(rule.get("solved_in_search")) for rule in rules),
+            "solved_in_search_count": sum(
+                bool(rule.get("solved_in_search")) for rule in rules
+            ),
             "episode_count": sum(item.get("attempts", 1) for item in episodes),
             "successful_episode_count": sum(
                 item.get("successes", 1 if item.get("success") else 0)
@@ -435,7 +444,9 @@ def main() -> int:
             "senior_reasoning_effort": "high",
             "entry_index": args.entry_index,
             "success_threshold": args.success_threshold,
-            "configs": [config_name(index, config) for index, config in enumerate(CONFIGS)],
+            "configs": [
+                config_name(index, config) for index, config in enumerate(CONFIGS)
+            ],
             "timeout_s": args.timeout_s,
             "tool_timeout_s": args.timeout_s,
             "gpus": args.gpus.split(","),
@@ -456,7 +467,7 @@ def main() -> int:
     update_status(args.run_dir, rules, len(tasks), args.entry_index)
 
     gpus = [gpu.strip() for gpu in args.gpus.split(",") if gpu.strip()]
-    batches = {gpu: pending[index::len(gpus)] for index, gpu in enumerate(gpus)}
+    batches = {gpu: pending[index :: len(gpus)] for index, gpu in enumerate(gpus)}
     shared_vlas: dict[str, tuple[subprocess.Popen, str]] = {}
     executors = []
     futures = {}
@@ -517,7 +528,9 @@ def main() -> int:
         args.run_dir / "summary.json",
         {
             "tasks": len(rules),
-            "solved_in_search": sum(bool(rule.get("solved_in_search")) for rule in rules),
+            "solved_in_search": sum(
+                bool(rule.get("solved_in_search")) for rule in rules
+            ),
             "episodes": sum(rule.get("episodes", 0) for rule in rules),
             "gpt_calls_in_search": sum(
                 rule.get("gpt_calls_in_search", 0) for rule in rules

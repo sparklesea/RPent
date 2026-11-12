@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Evaluate Qwen+GPT collaborative RoboTwin control with stage-2 rules.
 
 The Qwen worker reads the stage-1 task memory. The GPT-6 senior reads a
@@ -20,7 +34,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 EVALUATION_PATH = ROOT / "robots" / "robotwin" / "eval" / "demo_randomized.json"
 RUNNER = Path(__file__).resolve().parent / "run_collab_eval_episode.sh"
@@ -28,7 +41,12 @@ WORKER_MODEL = "openai-chat:qwen3.6-27b"
 SENIOR_MODEL = "openai:gpt-6-astra"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run_ecc_stage1 import start_shared_vla, stop_shared_vla, utc_now, write_json
+from run_ecc_stage1 import (  # noqa: E402
+    start_shared_vla,
+    stop_shared_vla,
+    utc_now,
+    write_json,
+)
 
 
 def load_runs(entry_indexes: list[int], task_limit: int | None) -> list[dict[str, Any]]:
@@ -55,9 +73,7 @@ def load_runs(entry_indexes: list[int], task_limit: int | None) -> list[dict[str
             )
     expected_count = len(task_names) * len(entry_indexes)
     if len(runs) != expected_count:
-        raise RuntimeError(
-            f"expected {expected_count} runs, found {len(runs)}"
-        )
+        raise RuntimeError(f"expected {expected_count} runs, found {len(runs)}")
     return runs
 
 
@@ -98,7 +114,9 @@ def validate_inputs(
         qwen_stem = f"robotwin_{task_name}_demo_randomized_s0"
         for suffix in (".json", "_recipe.jsonl"):
             if not (qwen_task_memory / f"{qwen_stem}{suffix}").is_file():
-                raise RuntimeError(f"Qwen memory reference missing: {qwen_stem}{suffix}")
+                raise RuntimeError(
+                    f"Qwen memory reference missing: {qwen_stem}{suffix}"
+                )
         gpt_audit = gpt_task_memory / f"{task_name}_s0.json"
         if not gpt_audit.is_file():
             raise RuntimeError(f"GPT memory audit missing: {gpt_audit}")
@@ -132,8 +150,7 @@ def render_gpt_memory(
     what_failed = audit.get("what_failed")
     if what_failed:
         sections.append(
-            "## Failure notes\n"
-            + json.dumps(what_failed, ensure_ascii=False, indent=2)
+            "## Failure notes\n" + json.dumps(what_failed, ensure_ascii=False, indent=2)
         )
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
@@ -161,9 +178,7 @@ def parse_episode(output_dir: Path) -> dict[str, Any]:
         try:
             states = json.loads(states_path.read_text(encoding="utf-8"))
             environment_success = any(
-                (step.get("result") or {})
-                .get("episode_status", {})
-                .get("eval_success")
+                (step.get("result") or {}).get("episode_status", {}).get("eval_success")
                 is True
                 for step in reversed(states.get("steps") or [])
             )
@@ -439,9 +454,7 @@ def main() -> int:
         json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(args.run_dir.glob("*/result.json"))
     ]
-    finished_runs = {
-        (row["task"], row["entry_index"], row["seed"]) for row in rows
-    }
+    finished_runs = {(row["task"], row["entry_index"], row["seed"]) for row in rows}
     pending = [
         run
         for run in runs
@@ -450,7 +463,7 @@ def main() -> int:
     update_status(args.run_dir, rows, len(runs), args.entry_indexes)
 
     gpus = [gpu.strip() for gpu in args.gpus.split(",") if gpu.strip()]
-    batches = {gpu: pending[index::len(gpus)] for index, gpu in enumerate(gpus)}
+    batches = {gpu: pending[index :: len(gpus)] for index, gpu in enumerate(gpus)}
     shared_vlas: dict[str, tuple[subprocess.Popen, str]] = {}
     executors = []
     futures = {}

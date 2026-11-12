@@ -25,17 +25,22 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 from rpent.planner.qwen_router import QwenRouterModel
 
 
-def call(name, **args):
-    return ModelResponse(parts=[ToolCallPart(name, args)])
-
-
-def route(choice, reason="test route"):
+def call(name, *, usage=None, **args):
     return ModelResponse(
-        parts=[TextPart(json.dumps({"route": choice, "reason": reason}))]
+        parts=[ToolCallPart(name, args)],
+        usage=usage or RequestUsage(),
+    )
+
+
+def route(choice, reason="test route", *, usage=None):
+    return ModelResponse(
+        parts=[TextPart(json.dumps({"route": choice, "reason": reason}))],
+        usage=usage or RequestUsage(),
     )
 
 
@@ -92,9 +97,16 @@ class Senior:
         return self.reply
 
 
-def build(route_reply, *, action_reply=None, memory="", log_path=None):
+def build(
+    route_reply,
+    *,
+    action_reply=None,
+    senior_reply=None,
+    memory="",
+    log_path=None,
+):
     qwen = Qwen(route_reply, action_reply)
-    senior = Senior()
+    senior = Senior(senior_reply)
     model = QwenRouterModel(
         FunctionModel(qwen, model_name="qwen"),
         FunctionModel(senior, model_name="gpt"),
@@ -122,6 +134,50 @@ def test_qwen_route_calls_router_then_qwen_once():
     assert senior.calls == 0
     assert (model.router_calls, model.qwen_routes, model.gpt_routes) == (1, 1, 0)
     assert (model.qwen_calls, model.gpt_calls) == (1, 0)
+
+
+def test_usage_includes_router_and_qwen_action(tmp_path):
+    log_path = tmp_path / "qwen_router.jsonl"
+    model, _, _ = build(
+        route("qwen", usage=RequestUsage(input_tokens=10, output_tokens=2)),
+        action_reply=call(
+            "qwen_action",
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+        ),
+        log_path=log_path,
+    )
+
+    response = ask(model, START)
+
+    assert response.usage.input_tokens == 110
+    assert response.usage.output_tokens == 12
+    row = json.loads(log_path.read_text(encoding="utf-8"))
+    assert row["router_input_tokens"] == 10
+    assert row["action_input_tokens"] == 100
+    assert row["total_input_tokens"] == 110
+    assert row["total_output_tokens"] == 12
+
+
+def test_usage_includes_router_and_gpt_action(tmp_path):
+    log_path = tmp_path / "qwen_router.jsonl"
+    model, _, _ = build(
+        route("gpt", usage=RequestUsage(input_tokens=20, output_tokens=3)),
+        senior_reply=call(
+            "gpt_action",
+            usage=RequestUsage(input_tokens=200, output_tokens=20),
+        ),
+        log_path=log_path,
+    )
+
+    response = ask(model, START)
+
+    assert response.usage.input_tokens == 220
+    assert response.usage.output_tokens == 23
+    row = json.loads(log_path.read_text(encoding="utf-8"))
+    assert row["router_input_tokens"] == 20
+    assert row["action_input_tokens"] == 200
+    assert row["total_input_tokens"] == 220
+    assert row["total_output_tokens"] == 23
 
 
 def test_gpt_route_calls_router_then_senior_with_memory_only():
@@ -197,10 +253,16 @@ def test_route_parser_accepts_aliases_and_fenced_json():
 
 def test_streamed_agent_run_uses_routed_model():
     model, qwen, _ = build(
-        route("qwen"),
+        route("qwen", usage=RequestUsage(input_tokens=10, output_tokens=1)),
         action_reply=[
-            call("qwen_action"),
-            ModelResponse(parts=[TextPart("continued")]),
+            call(
+                "qwen_action",
+                usage=RequestUsage(input_tokens=100, output_tokens=10),
+            ),
+            ModelResponse(
+                parts=[TextPart("continued")],
+                usage=RequestUsage(input_tokens=50, output_tokens=5),
+            ),
         ],
     )
     agent = Agent(model)
@@ -218,6 +280,8 @@ def test_streamed_agent_run_uses_routed_model():
     assert output.output == "continued"
     assert model.requests == 2
     assert qwen.calls == 4
+    assert output.usage.input_tokens == 170
+    assert output.usage.output_tokens == 17
 
 
 def test_router_mode_is_mutually_exclusive(monkeypatch):

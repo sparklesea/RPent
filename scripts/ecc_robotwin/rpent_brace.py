@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """RoboTwin event-triggered replanning baseline inspired by BRACE.
 
 This is a deliberately small reproduction of BRACE's replanning controller.
@@ -126,11 +140,7 @@ class BRACEEventModel(EscalationModel):
         ):
             return "tool_errors"
 
-        poses = [
-            points
-            for _, result in fresh
-            if (points := _pose_points(result))
-        ]
+        poses = [points for _, result in fresh if (points := _pose_points(result))]
         if len(poses) >= self.stall_window:
             span = _motion_span(poses[-self.stall_window :])
             if span is not None and span < self.stall_span_m:

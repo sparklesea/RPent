@@ -29,7 +29,14 @@ from robots.robotwin.robot_spec import (
 from rpent.robots import enumerate_robots, get_robot_spec
 from rpent.robots.robot_spec import RobotSpec, RunConfig
 
-EXPECTED_ROBOTS = ("dual_franka", "franka", "libero", "robocasa", "robotwin")
+EXPECTED_ROBOTS = (
+    "dual_franka",
+    "franka",
+    "libero",
+    "robocasa",
+    "robotwin",
+    "robotwin_compact",
+)
 
 PROMPT_VARIABLES = {
     "libero": {
@@ -58,6 +65,17 @@ PROMPT_VARIABLES = {
         "output_dir": Path("/output"),
     },
     "robotwin": {
+        "task_name": "block_hammer_beat",
+        "seed": 3,
+        "task_config": "demo_randomized",
+        "instruction": "pick up the hammer",
+        "memory_dir": "/memory",
+        "mode": "eval",
+        "memory_profile": "hf",
+        "reference_tag": "block_hammer_beat_s0",
+        "output_dir": Path("/output"),
+    },
+    "robotwin_compact": {
         "task_name": "block_hammer_beat",
         "seed": 3,
         "task_config": "demo_randomized",
@@ -162,6 +180,14 @@ def test_run_config_and_robot_spec_are_frozen_contract_values() -> None:
     spec = get_robot_spec("libero")
     with pytest.raises(FrozenInstanceError):
         spec.name = "changed"  # type: ignore[misc]
+
+
+def test_robotwin_compact_reuses_the_base_runtime_contract() -> None:
+    compact = get_robot_spec("robotwin_compact")
+    base = get_robot_spec("robotwin")
+
+    assert compact.dashboard == base.dashboard
+    assert compact.supports_exploration is False
 
 
 def test_robotwin_runtime_contracts_contain_execution_critical_metadata() -> None:

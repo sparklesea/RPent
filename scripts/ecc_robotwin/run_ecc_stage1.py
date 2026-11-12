@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """ECC RoboTwin stage 1: device-side task-memory exploration.
 
 Qwen3.6-27B alone explores all 50 ``demo_randomized`` tasks using the first
@@ -17,8 +31,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -26,7 +40,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
 
 ROOT = Path(__file__).resolve().parents[2]
 EVALUATION_PATH = ROOT / "robots" / "robotwin" / "eval" / "demo_randomized.json"
@@ -53,7 +66,9 @@ def pick_free_port() -> int:
         return int(server.getsockname()[1])
 
 
-def start_shared_vla(gpu: str, model_path: Path, run_dir: Path) -> tuple[subprocess.Popen, str]:
+def start_shared_vla(
+    gpu: str, model_path: Path, run_dir: Path
+) -> tuple[subprocess.Popen, str]:
     port = pick_free_port()
     log_path = run_dir / f"shared_vla_gpu{gpu}.log"
     command = [str(SHARED_VLA_RUNNER), gpu, str(port), str(model_path)]
@@ -155,9 +170,7 @@ def recipe_paths(output_dir: Path, task_name: str, seed: int) -> tuple[Path, Pat
     return output_dir / f"{tag}.json", output_dir / f"{tag}_recipe.jsonl"
 
 
-def parse_episode(
-    output_dir: Path, task_name: str, seed: int
-) -> dict[str, Any]:
+def parse_episode(output_dir: Path, task_name: str, seed: int) -> dict[str, Any]:
     audit, recipe = recipe_paths(output_dir, task_name, seed)
     states_path = output_dir / "states.json"
     environment_success = None
@@ -165,9 +178,7 @@ def parse_episode(
         try:
             states = json.loads(states_path.read_text(encoding="utf-8"))
             environment_success = any(
-                (step.get("result") or {})
-                .get("episode_status", {})
-                .get("eval_success")
+                (step.get("result") or {}).get("episode_status", {}).get("eval_success")
                 is True
                 for step in reversed(states.get("steps") or [])
             )
@@ -305,14 +316,20 @@ def run_task(
     return result
 
 
-def update_status(run_dir: Path, rows: list[dict[str, Any]], total: int) -> None:
+def update_status(
+    run_dir: Path,
+    rows: list[dict[str, Any]],
+    total: int,
+    settings: dict[str, Any],
+) -> None:
     write_json(
         run_dir / "status.json",
         {
             "phase": 1,
             "model": MODEL_ID,
             "reasoning_effort": "none",
-            "planner_timeout_s": rows[0]["planner_timeout_s"] if rows else None,
+            "planner_timeout_s": settings["planner_timeout_s"],
+            "tool_timeout_s": settings["tool_timeout_s"],
             "task_config": "demo_randomized",
             "planned_task_count": total,
             "finished_count": len(rows),
@@ -413,10 +430,14 @@ def main() -> int:
     ]
     finished_tasks = {row["task"] for row in rows}
     pending = [task for task in tasks if task["task_name"] not in finished_tasks]
-    update_status(args.run_dir, rows, len(tasks))
+    update_status(args.run_dir, rows, len(tasks), settings)
 
     gpus = [gpu.strip() for gpu in args.gpus.split(",") if gpu.strip()]
-    batches = {gpu: pending[index::len(gpus)] for index, gpu in enumerate(gpus)}
+    batches = {gpu: pending[index :: len(gpus)] for index, gpu in enumerate(gpus)}
+    task_by_name = {task["task_name"]: task for task in tasks}
+    gpu_by_task = {
+        task["task_name"]: gpu for gpu, batch in batches.items() for task in batch
+    }
     shared_vlas: dict[str, tuple[subprocess.Popen, str]] = {}
     executors = []
     futures = {}
@@ -447,15 +468,26 @@ def main() -> int:
             try:
                 row = future.result()
             except Exception as exc:
+                task = task_by_name[task_name]
                 row = {
                     "phase": 1,
                     "task": task_name,
+                    "seed": task["seed"],
+                    "task_language": task["task_language"],
+                    "gpu": gpu_by_task[task_name],
+                    "model": MODEL_ID,
+                    "reasoning_effort": "none",
+                    "planner_timeout_s": settings["planner_timeout_s"],
+                    "tool_timeout_s": settings["tool_timeout_s"],
+                    "exit_code": None,
+                    "subprocess_timeout": False,
+                    "elapsed_s": None,
                     "solved": False,
                     "runner_error": f"{type(exc).__name__}: {exc}",
                     "finished_at": utc_now(),
                 }
             rows.append(row)
-            update_status(args.run_dir, rows, len(tasks))
+            update_status(args.run_dir, rows, len(tasks), settings)
             print(
                 json.dumps(
                     {

@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Evaluate the RoboTwin BRACE-style event-triggered replanning baseline."""
 
 from __future__ import annotations
@@ -155,8 +169,7 @@ def run_episode(
             return_code = 124
             timed_out = True
             stdout.write(
-                f"\n[runner] subprocess timeout after "
-                f"{settings['timeout_s']}s\n"
+                f"\n[runner] subprocess timeout after {settings['timeout_s']}s\n"
             )
             if process is not None:
                 _terminate_process_group(process)
@@ -249,8 +262,7 @@ def update_status(
                 for row in rows
             ),
             "clean_success": sum(
-                row.get("entry_index") == entry_index
-                and bool(row.get("clean_success"))
+                row.get("entry_index") == entry_index and bool(row.get("clean_success"))
                 for row in rows
             ),
             "gpt_calls": sum(
@@ -281,9 +293,7 @@ def update_status(
             "planned_run_count": total,
             "finished_count": len(rows),
             "success_count": sum(bool(row.get("solved")) for row in rows),
-            "clean_success_count": sum(
-                bool(row.get("clean_success")) for row in rows
-            ),
+            "clean_success_count": sum(bool(row.get("clean_success")) for row in rows),
             "gpt_call_count": sum(row.get("gpt_calls", 0) for row in rows),
             "senior_reason_counts": dict(sorted(reason_counts.items())),
             "subprocess_timeout_count": sum(
@@ -319,9 +329,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stall-window", type=int, default=DEFAULT_STALL_WINDOW)
     parser.add_argument("--stall-span-m", type=float, default=DEFAULT_STALL_SPAN_M)
     parser.add_argument("--max-vetoes", type=int, default=DEFAULT_MAX_VETOES)
-    parser.add_argument(
-        "--worker-base-url", default="https://cloud.infini-ai.com/maas"
-    )
+    parser.add_argument("--worker-base-url", default="https://cloud.infini-ai.com/maas")
     parser.add_argument("--senior-base-url", default="https://ai.soruxgpt.com")
     args = parser.parse_args()
     if args.workers_per_gpu < 1:
@@ -430,9 +438,7 @@ def main() -> int:
         for path in sorted(args.run_dir.glob("*/result.json"))
     ]
     rows = [row for row in rows if not row.get("runner_error")]
-    finished_runs = {
-        (row["task"], row["entry_index"], row["seed"]) for row in rows
-    }
+    finished_runs = {(row["task"], row["entry_index"], row["seed"]) for row in rows}
     pending = [
         run
         for run in runs
@@ -441,7 +447,7 @@ def main() -> int:
     update_status(args.run_dir, rows, len(runs), args.entry_indexes, settings)
 
     gpus = [value.strip() for value in args.gpus.split(",") if value.strip()]
-    batches = {gpu: pending[index::len(gpus)] for index, gpu in enumerate(gpus)}
+    batches = {gpu: pending[index :: len(gpus)] for index, gpu in enumerate(gpus)}
     shared_vlas: dict[str, tuple[subprocess.Popen, str]] = {}
     executors = []
     futures = {}

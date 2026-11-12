@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Evaluate the RoboTwin GPT-plan / Qwen-execute timed-replan baseline.
 
 The first planning turn is GPT-6.  Qwen handles every other turn.  If the episode
@@ -226,9 +240,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-turns", type=int, default=100)
     parser.add_argument("--max-episode-steps", type=int, default=10000)
     parser.add_argument("--replan-interval-s", type=float, default=PLAN_TIME_REPLAN_S)
-    parser.add_argument(
-        "--worker-base-url", default="https://cloud.infini-ai.com/maas"
-    )
+    parser.add_argument("--worker-base-url", default="https://cloud.infini-ai.com/maas")
     parser.add_argument("--senior-base-url", default="https://ai.soruxgpt.com")
     args = parser.parse_args()
     if args.workers_per_gpu < 1:
@@ -312,9 +324,7 @@ def main() -> int:
         json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(args.run_dir.glob("*/result.json"))
     ]
-    finished_runs = {
-        (row["task"], row["entry_index"], row["seed"]) for row in rows
-    }
+    finished_runs = {(row["task"], row["entry_index"], row["seed"]) for row in rows}
     pending = [
         run
         for run in runs
@@ -325,7 +335,7 @@ def main() -> int:
     )
 
     gpus = [value.strip() for value in args.gpus.split(",") if value.strip()]
-    batches = {gpu: pending[index::len(gpus)] for index, gpu in enumerate(gpus)}
+    batches = {gpu: pending[index :: len(gpus)] for index, gpu in enumerate(gpus)}
     shared_vlas: dict[str, tuple[subprocess.Popen, str]] = {}
     executors = []
     futures = {}

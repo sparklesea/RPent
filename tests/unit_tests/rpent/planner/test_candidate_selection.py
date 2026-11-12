@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import json
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -24,12 +25,16 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 from rpent.planner.candidate_selection import CandidateSelectionModel
 
 
-def call(name, **args):
-    return ModelResponse(parts=[ToolCallPart(name, args)])
+def call(name, *, usage=None, **args):
+    return ModelResponse(
+        parts=[ToolCallPart(name, args)],
+        usage=usage or RequestUsage(),
+    )
 
 
 class Worker:
@@ -103,6 +108,34 @@ def test_samples_four_candidates_and_returns_verifier_choice():
     assert (model.requests, model.worker_calls, model.selector_calls) == (1, 4, 1)
 
 
+def test_usage_includes_every_candidate_and_the_selector(tmp_path):
+    log_path = tmp_path / "candidate_selection.jsonl"
+    model, _, _ = build(
+        [
+            call("left", usage=RequestUsage(input_tokens=100, output_tokens=10)),
+            call("right", usage=RequestUsage(input_tokens=100, output_tokens=10)),
+            call("up", usage=RequestUsage(input_tokens=100, output_tokens=10)),
+            call("down", usage=RequestUsage(input_tokens=100, output_tokens=10)),
+        ],
+        ModelResponse(
+            parts=[TextPart('{"selection": 2}')],
+            usage=RequestUsage(input_tokens=200, output_tokens=20),
+        ),
+        log_path=log_path,
+    )
+
+    response = ask(model, START)
+
+    assert response.usage.input_tokens == 600
+    assert response.usage.output_tokens == 60
+    row = json.loads(log_path.read_text(encoding="utf-8"))
+    assert row["worker_input_tokens"] == 400
+    assert row["selector_input_tokens"] == 200
+    assert row["total_input_tokens"] == 600
+    assert row["total_output_tokens"] == 60
+    assert [item["input_tokens"] for item in row["candidate_usage"]] == [100] * 4
+
+
 def test_invalid_selection_falls_back_to_first_candidate():
     model, _, _ = build(
         [call("left"), call("right"), call("up"), call("down")],
@@ -116,9 +149,19 @@ def test_invalid_selection_falls_back_to_first_candidate():
 
 
 def test_qwen_gate_selects_without_calling_gpt():
-    worker = Worker([call("left"), call("right"), call("up"), call("down")])
+    worker = Worker(
+        [
+            call("left", usage=RequestUsage(input_tokens=10, output_tokens=1)),
+            call("right", usage=RequestUsage(input_tokens=10, output_tokens=1)),
+            call("up", usage=RequestUsage(input_tokens=10, output_tokens=1)),
+            call("down", usage=RequestUsage(input_tokens=10, output_tokens=1)),
+        ]
+    )
     gate = Selector(
-        ModelResponse(parts=[TextPart('{"selection": 2, "reason": "right is safe"}')])
+        ModelResponse(
+            parts=[TextPart('{"selection": 2, "reason": "right is safe"}')],
+            usage=RequestUsage(input_tokens=5, output_tokens=1),
+        )
     )
     selector = Selector(ModelResponse(parts=[TextPart('{"selection": 1}')]))
     model = CandidateSelectionModel(
@@ -133,6 +176,8 @@ def test_qwen_gate_selects_without_calling_gpt():
     assert selector.notes == []
     assert (model.gate_calls, model.gate_selections, model.selector_calls) == (1, 1, 0)
     assert "selection 0" in gate.notes[0]
+    assert response.usage.input_tokens == 45
+    assert response.usage.output_tokens == 5
 
 
 def test_qwen_gate_rejection_escalates_to_gpt():
@@ -275,13 +320,23 @@ def test_streamed_agent_run_uses_selected_candidate():
         nonlocal candidate_round
         candidate_round += 1
         if candidate_round <= 4:
-            return call("noop", candidate=candidate_round)
-        return ModelResponse(parts=[TextPart("done")])
+            return call(
+                "noop",
+                candidate=candidate_round,
+                usage=RequestUsage(input_tokens=10, output_tokens=1),
+            )
+        return ModelResponse(
+            parts=[TextPart("done")],
+            usage=RequestUsage(input_tokens=10, output_tokens=1),
+        )
 
     model = CandidateSelectionModel(
         FunctionModel(worker, model_name="worker"),
         FunctionModel(
-            lambda messages, info: ModelResponse(parts=[TextPart('{"selection": 1}')]),
+            lambda messages, info: ModelResponse(
+                parts=[TextPart('{"selection": 1}')],
+                usage=RequestUsage(input_tokens=5, output_tokens=1),
+            ),
             model_name="selector",
         ),
         candidate_count=2,
@@ -300,6 +355,8 @@ def test_streamed_agent_run_uses_selected_candidate():
 
     assert output.output == "done"
     assert model.requests >= 2
+    assert output.usage.input_tokens == 70
+    assert output.usage.output_tokens == 8
 
 
 def test_candidate_selection_and_escalation_are_mutually_exclusive(monkeypatch):

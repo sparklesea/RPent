@@ -20,9 +20,12 @@ v1() {
 
 PYTHON_BIN="${RPENT_PYTHON:-$ROOT/.runtime/venv/bin/python}"
 if [ ! -x "$PYTHON_BIN" ]; then
-  PYTHON_BIN="${PYTHON_BIN:-python3}"
+  PYTHON_BIN="$(command -v python3 || true)"
 fi
-: "${PYTHON_BIN:?python interpreter not found}"
+if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then
+  echo "python interpreter not found; set RPENT_PYTHON" >&2
+  exit 1
+fi
 
 unset ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
 export PYTHONPATH="$ROOT" PYTHONUNBUFFERED=1 PYDANTIC_AI_NO_BANNER=1

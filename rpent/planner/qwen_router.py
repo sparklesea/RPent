@@ -60,6 +60,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
+
+from rpent.planner.usage import merge_request_usage, usage_log_fields
 
 ROUTER_LABEL = "[Qwen router]"
 GPT_MEMORY_LABEL = "[GPT task memory]"
@@ -235,7 +238,7 @@ class QwenRouterModel(WrapperModel):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
-    ) -> tuple[str, str, dict[str, Any]]:
+    ) -> tuple[str, str, dict[str, Any], RequestUsage | None]:
         """Ask Qwen for a route and return the decision plus its log fields."""
         started = time.monotonic()
         self.router_calls += 1
@@ -255,9 +258,12 @@ class QwenRouterModel(WrapperModel):
                     "route_error": f"{type(exc).__name__}: {exc}"[:2000],
                     "route_fallback": True,
                     "router_latency_s": round(time.monotonic() - started, 3),
+                    **usage_log_fields("router", RequestUsage()),
                 },
+                None,
             )
 
+        router_usage = response.usage
         text = _response_text(response)
         route, reason = _parse_route(text)
         record: dict[str, Any] = {
@@ -265,13 +271,14 @@ class QwenRouterModel(WrapperModel):
             "route_reason": reason,
             "route_text": text[:2000],
             "router_latency_s": round(time.monotonic() - started, 3),
+            **usage_log_fields("router", router_usage),
         }
         if route is None:
             self.route_errors += 1
             record["route_error"] = "invalid router response"
             record["route_fallback"] = True
-            return "qwen", reason, record
-        return route, reason, record
+            return "qwen", reason, record, router_usage
+        return route, reason, record, router_usage
 
     async def request(
         self,
@@ -281,7 +288,7 @@ class QwenRouterModel(WrapperModel):
     ) -> ModelResponse:
         self.requests += 1
         started = time.monotonic()
-        route, _, record = await self._route(messages, model_settings)
+        route, _, record, router_usage = await self._route(messages, model_settings)
         record = {"request": self.requests, **record}
 
         if route == "gpt":
@@ -313,8 +320,11 @@ class QwenRouterModel(WrapperModel):
                     }
                 )
                 raise
+            total_usage = merge_request_usage([router_usage, response.usage])
             self._log(
                 record
+                | usage_log_fields("action", response.usage)
+                | usage_log_fields("total", total_usage)
                 | {
                     "selected": "gpt",
                     "gpt_latency_s": round(time.monotonic() - gpt_started, 3),
@@ -326,7 +336,7 @@ class QwenRouterModel(WrapperModel):
                     "latency_s": round(time.monotonic() - started, 3),
                 }
             )
-            return response
+            return dataclasses.replace(response, usage=total_usage)
 
         self.qwen_routes += 1
         self.qwen_calls += 1
@@ -348,8 +358,11 @@ class QwenRouterModel(WrapperModel):
                 }
             )
             raise
+        total_usage = merge_request_usage([router_usage, response.usage])
         self._log(
             record
+            | usage_log_fields("action", response.usage)
+            | usage_log_fields("total", total_usage)
             | {
                 "selected": "qwen",
                 "qwen_latency_s": round(time.monotonic() - qwen_started, 3),
@@ -361,7 +374,7 @@ class QwenRouterModel(WrapperModel):
                 "latency_s": round(time.monotonic() - started, 3),
             }
         )
-        return response
+        return dataclasses.replace(response, usage=total_usage)
 
     @asynccontextmanager
     async def request_stream(
