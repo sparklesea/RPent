@@ -209,6 +209,19 @@ def build_planner(
         api_model = retry_from_env(
             prompt_cache_from_env(build_api_model(model, base_url))
         )
+        # RPENT_CANDIDATE_SELECTION=1 (opt-in): sample several worker replies
+        # and let a senior verifier choose one before tools are dispatched.
+        from rpent.planner.candidate_selection import candidate_selection_from_env
+
+        api_model = candidate_selection_from_env(
+            api_model, output_dir=output_dir, reasoning_effort=reasoning_effort
+        )
+        # RPENT_QWEN_ROUTER=1 (opt-in): Qwen chooses Qwen or GPT per turn.
+        from rpent.planner.qwen_router import qwen_router_from_env
+
+        api_model = qwen_router_from_env(
+            api_model, output_dir=output_dir, reasoning_effort=reasoning_effort
+        )
         # RPENT_ESCALATION=1 (opt-in): a senior model takes event-triggered turns.
         from rpent.planner.escalation import escalation_from_env
 
